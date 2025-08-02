@@ -12,7 +12,7 @@ mod config;
 mod dhcp;
 mod dns_client;
 mod fakeip;
-mod filters;
+pub mod filters;
 mod helper;
 pub mod resolver;
 mod runtime;

@@ -53,6 +53,7 @@ pub struct Config {
     pub store_smart_stats: bool,
     pub hosts: Option<trie::StringTrie<IpAddr>>,
     pub nameserver_policy: HashMap<String, NameServer>,
+    pub rewrite_ttl: Option<u32>,
 }
 
 impl Config {
@@ -363,6 +364,7 @@ impl TryFrom<&crate::config::def::Config> for Config {
                 Some(tree)
             },
             nameserver_policy,
+            rewrite_ttl: dc.rewrite_ttl,
         })
     }
 }

@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use hickory_proto::{op, rr};
 
@@ -46,6 +46,8 @@ pub struct EnhancedResolver {
 
     reverse_lookup_cache:
         Option<Arc<RwLock<lru_time_cache::LruCache<net::IpAddr, String>>>>,
+
+    rewrite_ttl: Option<u32>,
 }
 
 impl EnhancedResolver {
@@ -77,6 +79,7 @@ impl EnhancedResolver {
             fake_dns: None,
 
             reverse_lookup_cache: None,
+            rewrite_ttl: None,
         }
     }
 
@@ -98,6 +101,7 @@ impl EnhancedResolver {
             fake_dns: None,
 
             reverse_lookup_cache: None,
+            rewrite_ttl: None,
         });
 
         Self {
@@ -157,7 +161,9 @@ impl EnhancedResolver {
                     hickory_resolver::dns_lru::TtlConfig::new(
                         Some(Duration::from_secs(1)),
                         Some(Duration::from_secs(1)),
-                        Some(Duration::from_secs(60)),
+                        Some(Duration::from_secs(
+                            cfg.rewrite_ttl.unwrap_or(60) as u64
+                        )),
                         Some(Duration::from_secs(10)),
                     ),
                 ),
@@ -220,6 +226,7 @@ impl EnhancedResolver {
                     4096,
                 ),
             ))),
+            rewrite_ttl: cfg.rewrite_ttl,
         }
     }
 
@@ -270,7 +277,7 @@ impl EnhancedResolver {
         q.set_name(name);
         q.set_query_type(record_type);
         m.add_query(q);
-        m.set_recursion_desired(true);
+        // m.set_recursion_desired(false);
 
         match self.exchange(&m).await {
             Ok(result) => {
@@ -288,11 +295,10 @@ impl EnhancedResolver {
     #[instrument(skip_all)]
     async fn exchange(&self, message: &op::Message) -> anyhow::Result<op::Message> {
         if let Some(q) = message.query() {
-            trace!(q = q.to_string(), "start");
-            if let Some(lru) = &self.lru_cache
-                && let Some(cached) = lru.read().await.get(q, Instant::now())
-            {
-                if !message.recursion_desired() {
+            let recursion_desired = message.recursion_desired();
+            trace!(q = q.to_string(), "start, cache: {}", !recursion_desired);
+            if !recursion_desired && let Some(lru) = &self.lru_cache {
+                if let Some(cached) = lru.read().await.get(q, Instant::now()) {
                     trace!(q = q.to_string(), "cache hit, RA not desired");
                     if let Ok(cached) = cached.inspect_err(|x| {
                         warn!("failed to get cached message: {}", x);
@@ -301,22 +307,22 @@ impl EnhancedResolver {
                             q = q.to_string(),
                             "cache hit for DNS query, returning cached response",
                         );
+                        if self.is_fake_ip_of_message(message).await {
+                            return self.create_fake_dns_response(message, 1).await;
+                        }
                         let mut reply =
                             build_dns_response_message(message, true, false);
                         reply.add_answers(cached.records().iter().cloned());
                         return Ok(reply);
                     }
                 } else {
-                    trace!(
-                        q = q.to_string(),
-                        "cache hit, RA desired, bypassing cache",
-                    );
+                    trace!(q = q.to_string(), "cache not hit, bypassing cache",);
                 }
             }
-            trace!(q = q.to_string(), "querying resolver");
-            let res = self.exchange_no_cache(message).await;
+            trace!(q = q.to_string(), "querying resolver without cache");
+            let res = self.exchange_no_cache(message).await?;
             trace!(q = q.to_string(), "query completed");
-            res
+            Ok(res)
         } else {
             Err(anyhow!("invalid query"))
         }
@@ -340,21 +346,23 @@ impl EnhancedResolver {
             EnhancedResolver::batch_exchange(&self.main, message).await
         };
 
-        let rv = query.await;
+        let m = query.await?;
 
-        if let Ok(msg) = &rv
-            && let Some(lru) = &self.lru_cache
+        // 在存储到缓存之前重写TTL
+        // self.rewrite_ttl_in_message(&mut m);
+
+        if let Some(lru) = &self.lru_cache
             && !(q.query_type() == rr::RecordType::TXT
                 && q.name().to_ascii().starts_with("_acme-challenge."))
         {
             lru.write().await.insert_records(
                 q.clone(),
-                msg.answers().iter().cloned(),
+                m.answers().iter().cloned(),
                 Instant::now(),
             );
         }
 
-        rv
+        Ok(m)
     }
 
     fn match_policy(&self, m: &op::Message) -> Option<&Vec<ThreadSafeDNSClient>> {
@@ -397,8 +405,31 @@ impl EnhancedResolver {
 
         if let Ok(main_result) = main_query.await {
             let ip_list = EnhancedResolver::ip_list_of_message(&main_result);
-            if !ip_list.is_empty() && !self.should_ip_fallback(&ip_list[0]) {
-                return Ok(main_result);
+            if !ip_list.is_empty() {
+                // 如果启用了 fake-ip 且域名不在过滤列表中，返回 fake-ip
+                let need_fallback = self.should_ip_fallback(&ip_list[0]);
+                let use_fake_ip = self.fake_ip_enabled();
+                debug!(
+                    "need fallback: {}, use fake_ip: {}",
+                    need_fallback, use_fake_ip
+                );
+                // 如果 nameserver 返回了结果，检查是否需要 fallback
+                if !need_fallback {
+                    return Ok(main_result);
+                }
+                if use_fake_ip {
+                    if let Some(domain) =
+                        EnhancedResolver::domain_name_of_message(message)
+                        && let Ok(response) =
+                            self.create_fake_dns_response(message, 3600).await
+                    {
+                        info!(
+                            "nameserver returned non-CN IP, using fake-ip for: {}",
+                            domain
+                        );
+                        return Ok(response);
+                    }
+                }
             }
         }
 
@@ -463,6 +494,73 @@ impl EnhancedResolver {
             lru.write().await.insert(ip, domain);
         }
     }
+
+    /// 使用 fake DNS 生成响应
+    async fn create_fake_dns_response(
+        &self,
+        message: &op::Message,
+        ttl: u32,
+    ) -> anyhow::Result<op::Message> {
+        let mut fake_dns = self.fake_dns.as_ref().unwrap().write().await;
+        if let Some(domain) = EnhancedResolver::domain_name_of_message(message)
+            && !fake_dns.should_skip(&domain)
+        {
+            let fake_ip = fake_dns.lookup(&domain).await;
+            debug!("using fake-ip: {} -> {:?}", &domain, fake_ip);
+
+            // 构建包含 fake-ip 的响应
+            let mut response = build_dns_response_message(message, false, false);
+            response.set_response_code(op::ResponseCode::NoError);
+
+            if let net::IpAddr::V4(ip) = fake_ip {
+                let record = rr::Record::from_rdata(
+                    message.query().unwrap().name().clone(),
+                    ttl,
+                    rr::RData::A(rr::rdata::A(ip)),
+                );
+                response.add_answers(vec![record]);
+            }
+
+            return Ok(response);
+        }
+
+        Err(anyhow!("domain should be skipped for fake-ip"))
+    }
+
+    fn rewrite_ttl_in_message(&self, message: &mut op::Message, ttl: u32) {
+        let mut new_ttl = self.rewrite_ttl.unwrap();
+
+        if ttl != 0 {
+            new_ttl = ttl;
+        }
+
+        debug!("rewriting TTL to {} for DNS response", new_ttl);
+
+        // 重写Answer部分的TTL
+        for answer in message.answers_mut() {
+            answer.set_ttl(new_ttl);
+        }
+
+        // 重写Authority部分的TTL
+        for authority in message.name_servers_mut() {
+            authority.set_ttl(new_ttl);
+        }
+
+        // 重写Additional部分的TTL
+        for additional in message.additionals_mut() {
+            additional.set_ttl(new_ttl);
+        }
+    }
+
+    async fn is_fake_ip_of_message(&self, m: &op::Message) -> bool {
+        let ip_list = EnhancedResolver::ip_list_of_message(m);
+
+        if ip_list.is_empty() {
+            return false;
+        }
+
+        self.is_fake_ip(ip_list[0]).await
+    }
 }
 
 #[async_trait]
@@ -473,7 +571,9 @@ impl ClashResolver for EnhancedResolver {
         host: &str,
         enhanced: bool,
     ) -> anyhow::Result<Option<net::IpAddr>> {
-        match self.ipv6.load(Relaxed) {
+        let start_time = std::time::Instant::now();
+
+        let result = match self.ipv6.load(Relaxed) {
             true => {
                 let fut1 = self
                     .resolve_v6(host, enhanced)
@@ -485,16 +585,40 @@ impl ClashResolver for EnhancedResolver {
                 let futs = vec![fut1.boxed(), fut2.boxed()];
                 let r = futures::future::select_ok(futs).await?;
                 if r.0.is_some() {
-                    return Ok(r.0);
+                    Ok(r.0)
+                } else {
+                    let r = futures::future::select_all(r.1).await;
+                    r.0
                 }
-                let r = futures::future::select_all(r.1).await;
-                r.0
             }
             false => self
                 .resolve_v4(host, enhanced)
                 .await
                 .map(|ip| ip.map(net::IpAddr::from)),
+        };
+
+        let duration = start_time.elapsed();
+
+        if result.is_ok() {
+            if let Ok(Some(ip)) = &result {
+                info!(
+                    "DNS resolve completed successfully for host '{}' -> {} in {:?}",
+                    host, ip, duration
+                );
+            } else {
+                info!(
+                    "DNS resolve completed (no result) for host '{}' in {:?}",
+                    host, duration
+                );
+            }
+        } else {
+            warn!(
+                "DNS resolve failed for host '{}' after {:?}",
+                host, duration
+            );
         }
+
+        result
     }
 
     #[instrument(skip(self))]
@@ -624,8 +748,8 @@ impl ClashResolver for EnhancedResolver {
             return false;
         }
 
-        let mut fake_dns = self.fake_dns.as_ref().unwrap().write().await;
-        fake_dns.is_fake_ip(ip).await
+        let mut f = self.fake_dns.as_ref().unwrap().write().await;
+        f.is_fake_ip(ip).await
     }
 
     async fn reverse_lookup(&self, ip: net::IpAddr) -> Option<String> {

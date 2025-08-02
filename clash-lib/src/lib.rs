@@ -618,4 +618,133 @@ mod tests {
 
         handle.join().unwrap();
     }
+
+    #[test]
+    fn test_geoip_filter() {
+        use std::{net::IpAddr, sync::Arc};
+        use crate::app::dns::filters::{FallbackIPFilter, GeoIPFilter};
+        use crate::common::mmdb::{MmdbLookupCountry, MockMmdbLookupTrait};
+
+        // 创建 mock MMDB
+        let mut mock_mmdb = MockMmdbLookupTrait::new();
+        
+        // 设置期望：中国 IP 返回 CN，美国 IP 返回 US
+        mock_mmdb
+            .expect_lookup_country()
+            .with(mockall::predicate::eq("114.114.114.114".parse::<IpAddr>().unwrap()))
+            .returning(|_| Ok(MmdbLookupCountry {
+                country_code: "CN".to_string(),
+            }));
+        
+        mock_mmdb
+            .expect_lookup_country()
+            .with(mockall::predicate::eq("8.8.8.8".parse::<IpAddr>().unwrap()))
+            .returning(|_| Ok(MmdbLookupCountry {
+                country_code: "US".to_string(),
+            }));
+
+        let mmdb = Arc::new(mock_mmdb);
+
+        // 测试中国 IP 过滤器
+        let cn_filter = GeoIPFilter::new("CN", Some(mmdb.clone()));
+        
+        // 测试中国 IP 应该匹配
+        assert!(cn_filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+        
+        // 测试美国 IP 不应该匹配
+        assert!(!cn_filter.apply(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+
+        // 测试美国 IP 过滤器
+        let us_filter = GeoIPFilter::new("US", Some(mmdb.clone()));
+        
+        // 测试美国 IP 应该匹配
+        assert!(us_filter.apply(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+        
+        // 测试中国 IP 不应该匹配
+        assert!(!us_filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_geoip_filter_without_mmdb() {
+        use std::net::IpAddr;
+        use crate::app::dns::filters::{FallbackIPFilter, GeoIPFilter};
+
+        // 测试没有 MMDB 的情况
+        let filter = GeoIPFilter::new("CN", None);
+        
+        // 没有 MMDB 时应该返回 false
+        assert!(!filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+        assert!(!filter.apply(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_geoip_filter_case_sensitivity() {
+        use std::{net::IpAddr, sync::Arc};
+        use crate::app::dns::filters::{FallbackIPFilter, GeoIPFilter};
+        use crate::common::mmdb::{MmdbLookupCountry, MockMmdbLookupTrait};
+
+        let mut mock_mmdb = MockMmdbLookupTrait::new();
+        
+        // 设置返回大写国家代码
+        mock_mmdb
+            .expect_lookup_country()
+            .returning(|_| Ok(MmdbLookupCountry {
+                country_code: "CN".to_string(),
+            }));
+
+        let mmdb = Arc::new(mock_mmdb);
+
+        // 测试大小写敏感性：应该精确匹配
+        let cn_filter = GeoIPFilter::new("CN", Some(mmdb.clone()));
+        assert!(cn_filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+
+        let cn_lower_filter = GeoIPFilter::new("cn", Some(mmdb.clone()));
+        assert!(!cn_lower_filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_geoip_filter_with_ipv6() {
+        use std::{net::IpAddr, sync::Arc};
+        use crate::app::dns::filters::{FallbackIPFilter, GeoIPFilter};
+        use crate::common::mmdb::{MmdbLookupCountry, MockMmdbLookupTrait};
+
+        let mut mock_mmdb = MockMmdbLookupTrait::new();
+        
+        // 设置 IPv6 地址返回中国
+        mock_mmdb
+            .expect_lookup_country()
+            .with(mockall::predicate::eq("2400:3200::1".parse::<IpAddr>().unwrap()))
+            .returning(|_| Ok(MmdbLookupCountry {
+                country_code: "CN".to_string(),
+            }));
+
+        let mmdb = Arc::new(mock_mmdb);
+        let cn_filter = GeoIPFilter::new("CN", Some(mmdb));
+
+        // 测试 IPv6 地址
+        assert!(cn_filter.apply(&"2400:3200::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_geoip_filter_with_lookup_error() {
+        use std::{net::IpAddr, sync::Arc};
+        use crate::app::dns::filters::{FallbackIPFilter, GeoIPFilter};
+        use crate::common::mmdb::MockMmdbLookupTrait;
+
+        let mut mock_mmdb = MockMmdbLookupTrait::new();
+        
+        // 设置查找失败的情况
+        mock_mmdb
+            .expect_lookup_country()
+            .returning(|_| Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "country not found",
+            )));
+
+        let mmdb = Arc::new(mock_mmdb);
+        let cn_filter = GeoIPFilter::new("CN", Some(mmdb));
+
+        // 查找失败时应该返回 false
+        assert!(!cn_filter.apply(&"114.114.114.114".parse::<IpAddr>().unwrap()));
+    }
 }

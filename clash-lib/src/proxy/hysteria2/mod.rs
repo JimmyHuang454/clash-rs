@@ -120,7 +120,9 @@ pub struct Handler {
 
 impl Debug for Handler {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HystClient").finish()
+        f.debug_struct("Hysteria2")
+            .field("name", &self.opts.name)
+            .finish()
     }
 }
 

@@ -566,6 +566,8 @@ pub struct DNS {
     pub default_nameserver: Vec<String>,
     /// Lookup domains via specific nameservers
     pub nameserver_policy: HashMap<String, String>,
+    /// Rewrite TTL for DNS responses
+    pub rewrite_ttl: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
