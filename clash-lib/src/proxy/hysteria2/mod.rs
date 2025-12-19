@@ -274,8 +274,14 @@ impl Handler {
     ) -> anyhow::Result<(SendRequest<OpenStreams, Bytes>, CcRx, bool)> {
         let h3_conn = h3_quinn::Connection::new(conn.clone());
 
-        let (_, mut sender) =
+        let (driver, mut sender) =
             h3::client::builder().build::<_, _, Bytes>(h3_conn).await?;
+
+        let conn_ref = conn.clone();
+        tokio::spawn(async move {
+            let _keep_alive = driver;
+            let _ = conn_ref.closed().await;
+        });
 
         let req = http::Request::post("https://hysteria/auth")
             .header("Hysteria-Auth", passwd)
@@ -329,8 +335,12 @@ impl Handler {
                 None => true,
             }
         }) {
-            Some(s) => Ok(s.clone()),
+            Some(s) => {
+                tracing::debug!("reuse existing hysteria2 connection");
+                Ok(s.clone())
+            }
             None => {
+                tracing::debug!("create new hysteria2 connection");
                 let (session, guard) = self
                     .new_authed_connection_inner(sess, resolver)
                     .await

@@ -24,8 +24,6 @@ use tracing_subscriber::{
 use tracing_subscriber::fmt::{format::Writer, FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use std::fmt;
-use std::cell::RefCell;
-use std::time::Instant;
 
 impl From<LogLevel> for LevelFilter {
     fn from(level: LogLevel) -> Self {
@@ -90,29 +88,6 @@ struct CustomFormatter {
     display_timestamp: bool,
 }
 
-thread_local! {
-    static THREAD_START_TIME: Instant = Instant::now();
-}
-
-fn format_duration(d: std::time::Duration) -> String {
-    let micros = d.as_micros();
-    if micros < 1000 {
-        format!("{}us", micros)
-    } else if micros < 1_000_000 {
-        format!("{:.2}ms", micros as f64 / 1000.0)
-    } else {
-        let secs = d.as_secs();
-        if secs < 60 {
-            format!("{:.2}s", d.as_secs_f64())
-        } else if secs < 3600 {
-            format!("{}m{}s", secs / 60, secs % 60)
-        } else if secs < 86400 {
-            format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
-        } else {
-            format!("{}d{}h", secs / 86400, (secs % 86400) / 3600)
-        }
-    }
-}
 
 impl<S, N> FormatEvent<S, N> for CustomFormatter
 where
@@ -144,39 +119,23 @@ where
              };
              write!(writer, "{}{:>5}\x1b[0m ", color, level.as_str())?;
              
-             // Thread ID
-             let thread_id = std::thread::current().id();
-             let tid_str = format!("{:?}", thread_id);
-             // Simple hash
-             let mut hash: u32 = 0;
-             for b in tid_str.bytes() {
-                 hash = hash.wrapping_add(b as u32);
-                 hash = hash.wrapping_mul(31);
-             }
-             
-             // Use 256 colors, avoiding 0-16 (standard colors) and 232-255 (grayscale)
-             // We map to 17-231 (216 colors)
-             let color_code = (hash % 214) + 17;
-             write!(writer, "\x1b[38;5;{}m{:?}\x1b[0m ", color_code, thread_id)?;
-
         } else {
              write!(writer, "{:>5} ", meta.level().as_str())?;
-             write!(writer, "{:?} ", std::thread::current().id())?;
         }
 
         // Duration since thread start
-        let now = Instant::now();
-        let duration = THREAD_START_TIME.with(|start_time| {
-            now.duration_since(*start_time)
-        });
+        // let now = Instant::now();
+        // let duration = THREAD_START_TIME.with(|start_time| {
+        //    now.duration_since(*start_time)
+        // });
         
-        let duration_str = format_duration(duration);
+        // let duration_str = format_duration(duration);
 
-        if self.ansi {
-             write!(writer, "\x1b[2m{:>8}\x1b[0m ", duration_str)?;
-        } else {
-             write!(writer, "{:>8} ", duration_str)?;
-        }
+        // if self.ansi {
+        //     write!(writer, "\x1b[2m{:>8}\x1b[0m ", duration_str)?;
+        // } else {
+        //     write!(writer, "{:>8} ", duration_str)?;
+        // }
         
         // File/Line
         if let (Some(file), Some(line)) = (meta.file(), meta.line()) {

@@ -9,7 +9,13 @@ use std::{
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
+
+static SESSION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -399,6 +405,7 @@ impl Display for Network {
 
 #[derive(Serialize)]
 pub struct Session {
+    pub id: u64,
     /// The network type, representing either TCP or UDP.
     pub network: Network,
     /// The type of the inbound connection.
@@ -417,11 +424,14 @@ pub struct Session {
     pub asn: Option<String>,
     /// Traffic statistics for intelligent proxy selection
     pub traffic_stats: Option<crate::app::remote_content_manager::TrafficStats>,
+    #[serde(skip)]
+    pub start_time: Instant,
 }
 
 impl Session {
     pub fn as_map(&self) -> HashMap<String, Box<dyn ESerialize + Send + Sync>> {
         let mut rv = HashMap::new();
+        rv.insert("id".to_string(), Box::new(self.id) as _);
         rv.insert("network".to_string(), Box::new(self.network) as _);
         rv.insert("type".to_string(), Box::new(self.typ) as _);
         rv.insert("sourceIP".to_string(), Box::new(self.source.ip()) as _);
@@ -454,6 +464,7 @@ impl Session {
 impl Default for Session {
     fn default() -> Self {
         Self {
+            id: SESSION_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             network: Network::Tcp,
             typ: Type::Http,
             source: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
@@ -463,6 +474,7 @@ impl Default for Session {
             iface: None,
             asn: None,
             traffic_stats: None,
+            start_time: Instant::now(),
         }
     }
 }
@@ -471,7 +483,9 @@ impl Display for Session {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "[{}] {} -> {}[{}]",
+            "[{}][{:.3}s][{}] {} -> {}[{}]",
+            self.id,
+            self.start_time.elapsed().as_secs_f64(),
             self.network,
             self.source,
             self.destination,
@@ -483,12 +497,14 @@ impl Display for Session {
 impl Debug for Session {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
+            .field("id", &self.id)
             .field("network", &self.network)
             .field("source", &self.source)
             .field("destination", &self.destination)
             .field("packet_mark", &self.so_mark)
             .field("iface", &self.iface)
             .field("asn", &self.asn)
+            .field("start_time", &self.start_time)
             .finish()
     }
 }
@@ -496,6 +512,7 @@ impl Debug for Session {
 impl Clone for Session {
     fn clone(&self) -> Self {
         Self {
+            id: self.id,
             network: self.network,
             typ: self.typ,
             source: self.source,
@@ -505,6 +522,7 @@ impl Clone for Session {
             iface: self.iface.as_ref().cloned(),
             asn: self.asn.clone(),
             traffic_stats: self.traffic_stats.clone(),
+            start_time: self.start_time,
         }
     }
 }
