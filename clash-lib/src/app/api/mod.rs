@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, sync::atomic::AtomicU64};
 
 use axum::{
     Router, middleware,
@@ -34,6 +34,7 @@ mod middlewares;
 pub struct AppState {
     log_source_tx: Sender<LogEvent>,
     statistics_manager: Arc<StatisticsManager>,
+    memory_limit: Arc<AtomicU64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -60,7 +61,16 @@ pub fn get_api_runner(
     let app_state = Arc::new(AppState {
         log_source_tx: log_source,
         statistics_manager: statistics_manager.clone(),
+        memory_limit: Arc::new(AtomicU64::new(0)),
     });
+    
+    // Share memory limit with global allocator wrapper if possible
+    // Since GlobalAllocator is static, we need a way to pass this limit.
+    // For now, we will rely on a static AtomicU64 exposed by clash-lib or clash-bin
+    // But since clash-lib is a library, it's better to expose a function to set it.
+    
+    // Initialize the global memory limit used by the allocator
+    crate::ALLOCATOR_LIMIT.store(0, std::sync::atomic::Ordering::Relaxed);
 
     let origins: AllowOrigin =
         if let Some(origins) = &controller_cfg.cors_allow_origins {
@@ -92,7 +102,12 @@ pub fn get_api_runner(
             .route("/logs", get(handlers::log::handle))
             .route("/traffic", get(handlers::traffic::handle))
             .route("/version", get(handlers::version::handle))
-            .route("/memory", get(handlers::memory::handle))
+            .route(
+                "/memory",
+                get(handlers::memory::handle)
+                    .post(handlers::memory::flush)
+                    .put(handlers::memory::set_limit),
+            )
             .route("/restart", post(handlers::restart::handle))
             .nest(
                 "/configs",

@@ -42,6 +42,8 @@ tun = [
 redir = []
 zero_copy = []
 bench = ["dep:criterion"]
+mimalloc = ["dep:mimalloc", "dep:libmimalloc-sys"]
+jemallocator = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-ctl"]
 tracing = ["tokio/tracing", "dep:tracing-opentelemetry", "dep:tracing-chrome", "dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:opentelemetry-semantic-conventions"]
 
 [dependencies]
@@ -98,6 +100,11 @@ uuid = { version = "1", features = ["v4", "fast-rng", "macro-diagnostics", "serd
 network-interface = { version = "2" }
 base64 = "0.22"
 zstd = "0.13.3"
+
+mimalloc = { version = "0.1", optional = true, default-features = false }
+libmimalloc-sys = { version = "0.1", optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
+tikv-jemalloc-ctl = { version = "0.6", optional = true }
 portable-atomic = { version = "1", features = ["serde"] }
 
 h2 = "0.4"

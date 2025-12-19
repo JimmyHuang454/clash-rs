@@ -4,8 +4,14 @@ repository = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
 
+[features]
+default = []
+mimalloc = ["clash-lib/mimalloc", "dep:mimalloc"]
+jemallocator = ["clash-lib/jemallocator"]
+
 [dependencies]
 clash-lib = { path = "../clash-lib", default-features = false, features = ["shadowsocks", "tuic", "ssh", "zero_copy"] }
+mimalloc = { version = "0.1", optional = true, default-features = false }
 
 [lib]
 name = "clashrs"

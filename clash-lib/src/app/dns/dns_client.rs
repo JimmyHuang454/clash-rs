@@ -249,7 +249,7 @@ impl Display for DnsConfig {
                 if let Some(iface) = iface {
                     write!(f, "bind: {iface} ")?;
                 }
-                write!(f, "via proxy: {}", proxy.name())?;
+                write!(f, " via proxy: {}", proxy.name())?;
                 Ok(())
             }
             DnsConfig::Tcp(addr, iface, proxy) => {
@@ -257,7 +257,7 @@ impl Display for DnsConfig {
                 if let Some(iface) = iface {
                     write!(f, "bind: {iface} ")?;
                 }
-                write!(f, "via proxy: {}", proxy.name())?;
+                write!(f, " via proxy: {}", proxy.name())?;
                 Ok(())
             }
             DnsConfig::Tls(addr, host, iface, proxy) => {
@@ -266,7 +266,7 @@ impl Display for DnsConfig {
                     write!(f, "bind: {iface} ")?;
                 }
                 write!(f, "host: {host}")?;
-                write!(f, "via proxy: {}", proxy.name())
+                write!(f, " via proxy: {}", proxy.name())
             }
             DnsConfig::Https(addr, host, iface, proxy) => {
                 write!(f, "HTTPS: {}:{} ", addr.ip(), addr.port())?;
@@ -274,7 +274,7 @@ impl Display for DnsConfig {
                     write!(f, "bind: {iface} ")?;
                 }
                 write!(f, "host: {host}")?;
-                write!(f, "via proxy: {}", proxy.name())
+                write!(f, " via proxy: {}", proxy.name())
             }
         }
     }

@@ -61,6 +61,8 @@ pub use config::{
     def::{Config as ClashConfigDef, DNS as ClashDNSConfigDef},
 };
 
+pub static ALLOCATOR_LIMIT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -120,6 +122,7 @@ impl Config {
 
 pub struct GlobalState {
     log_level: LogLevel,
+    pub log_timestamp: bool,
     #[cfg(feature = "tun")]
     tunnel_listener_handle: Option<JoinHandle<Result<()>>>,
     api_listener_handle: Option<JoinHandle<Result<()>>>,
@@ -175,7 +178,12 @@ pub fn start_scaffold(opts: Options) -> Result<()> {
         log_collector,
         &cwd,
         opts.log_file,
+        config.general.log_timestamp,
     );
+
+    if let Some(limit) = config.general.allocator_limit {
+        ALLOCATOR_LIMIT.store(limit, std::sync::atomic::Ordering::Relaxed);
+    }
 
     rt.block_on(async {
         match start(config, cwd, log_tx).await {
@@ -241,6 +249,7 @@ pub async fn start(
     // things we need to clone before consuming config
     let controller_cfg = config.general.controller.clone();
     let log_level = config.general.log_level;
+    let log_timestamp = config.general.log_timestamp;
 
     let components = create_components(cwd.clone(), config).await?;
 
@@ -255,6 +264,7 @@ pub async fn start(
 
     let global_state = Arc::new(Mutex::new(GlobalState {
         log_level,
+        log_timestamp,
         #[cfg(feature = "tun")]
         tunnel_listener_handle: tun_runner_handle,
         dns_listener_handle,

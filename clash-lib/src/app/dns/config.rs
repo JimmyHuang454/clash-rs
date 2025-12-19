@@ -34,6 +34,8 @@ impl Display for NameServer {
 pub struct FallbackFilter {
     pub geo_ip: bool,
     pub geo_ip_code: String,
+    pub geo_ip_cache_expiration: Option<u64>,
+    pub match_noproxy: bool,
     pub ip_cidr: Option<Vec<ipnet::IpNet>>,
     pub domain: Vec<String>,
 }
@@ -455,6 +457,8 @@ impl From<crate::config::def::FallbackFilter> for FallbackFilter {
         Self {
             geo_ip: c.geo_ip,
             geo_ip_code: c.geo_ip_code.to_uppercase(),
+            geo_ip_cache_expiration: c.geo_ip_cache_expiration,
+            match_noproxy: c.match_noproxy,
             ip_cidr: ipcidr.ok(),
             domain: c.domain,
         }

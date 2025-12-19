@@ -24,6 +24,10 @@ fn default_route_table() -> u32 {
     DEFAULT_ROUTE_TABLE
 }
 
+fn default_log_timestamp() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DnsHijack {
@@ -111,6 +115,42 @@ pub enum LogLevel {
     Error,
     #[serde(alias = "off")]
     Silent,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(try_from = "String")]
+pub struct MemoryLimit(pub u64);
+
+impl TryFrom<String> for MemoryLimit {
+    type Error = String;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        let s = s.trim().to_uppercase();
+        if let Some(stripped) = s.strip_suffix("GB") {
+            let val: u64 = stripped
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid memory limit: {}", s))?;
+            Ok(MemoryLimit(val * 1024 * 1024 * 1024))
+        } else if let Some(stripped) = s.strip_suffix("MB") {
+            let val: u64 = stripped
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid memory limit: {}", s))?;
+            Ok(MemoryLimit(val * 1024 * 1024))
+        } else {
+            // Default to bytes if no suffix, or maybe error?
+            // User requested 50MB, 1GB specifically.
+            // Let's also support just bytes if it's a number?
+            // Or maybe KB?
+            // Let's stick to what was asked: MB and GB.
+            // But good to support raw bytes too as fallback or just parse.
+            let val: u64 = s
+                .parse()
+                .map_err(|_| format!("invalid memory limit format (expected '50MB' or '1GB'): {}", s))?;
+            Ok(MemoryLimit(val))
+        }
+    }
 }
 
 impl Display for LogLevel {
@@ -392,6 +432,10 @@ pub struct Config {
     /// Log level
     /// Either `debug`, `info`, `warning`, `error` or `off`
     pub log_level: LogLevel,
+    #[serde(default = "default_log_timestamp", alias = "log-timestamp")]
+    pub log_timestamp: bool,
+    #[serde(alias = "allocator-limit")]
+    pub allocator_limit: Option<MemoryLimit>,
     /// DNS client/server settings
     pub dns: DNS,
     /// Profile settings
@@ -597,6 +641,13 @@ pub struct FallbackFilter {
     #[serde(rename = "geoip-code")]
     #[educe(Default = "CN")]
     pub geo_ip_code: String,
+
+    #[serde(rename = "geoip-cache-expiration")]
+    pub geo_ip_cache_expiration: Option<u64>,
+
+    #[serde(rename = "match-noproxy")]
+    #[educe(Default = false)]
+    pub match_noproxy: bool,
 
     #[serde(rename = "ipcidr")]
     pub ip_cidr: Vec<String>,

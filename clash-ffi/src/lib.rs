@@ -4,6 +4,10 @@ use std::{
     os::raw::{c_char, c_int},
 };
 
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// # Safety
 /// This function is unsafe because it dereferences raw pointers.
 #[unsafe(no_mangle)]

@@ -13,7 +13,7 @@ standard = ["shadowsocks", "tuic", "ssh", "shadowquic", "wireguard", "clash-lib/
 plus = ["standard", "onion"]
 perf = ["plus", "jemallocator"]
 
-android = ["shadowsocks", "tuic", "aws-lc-rs", "wireguard", "clash-lib/zero_copy", "tproxy"] # Android build failed with libc
+android = ["shadowsocks", "tuic", "aws-lc-rs", "wireguard", "clash-lib/zero_copy", "tproxy", "mimalloc"] # Android build failed with libc
 bsd = ["shadowsocks", "tuic", "ring", "clash-lib/zero_copy"] # BSD build failed with aws-lc-rs, and cross compile also fail with missing headers for tun->route_manager
 
 shadowsocks = ["clash-lib/shadowsocks"]
@@ -29,7 +29,8 @@ tun = ["clash-lib/tun"]
 bench = ["clash-lib/bench"]
 dhat-heap = ["dep:dhat"]
 tracing = ["clash-lib/tracing"]
-jemallocator = ["dep:tikv-jemallocator"]
+jemallocator = ["dep:tikv-jemallocator", "clash-lib/jemallocator"]
+mimalloc = ["dep:mimalloc", "clash-lib/mimalloc"]
 
 aws-lc-rs = ["clash-lib/aws-lc-rs"]
 ring = ["clash-lib/ring"]
@@ -41,6 +42,9 @@ clash-lib = { path = "../clash-lib", default-features = false }
 
 dhat = { version = "0.3", optional = true }
 tikv-jemallocator = { version = "0.6", optional = true }
+mimalloc = { version = "0.1", optional = true, default-features = false }
 
 sentry = { version = "0.46", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 human-panic = "2.0"
+memory-stats = "1.0.0"
+log = "0.4"

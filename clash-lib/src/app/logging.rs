@@ -21,6 +21,11 @@ use tracing_oslog::OsLogger;
 use tracing_subscriber::{
     EnvFilter, Layer, filter::filter_fn, fmt::time::LocalTime, prelude::*,
 };
+use tracing_subscriber::fmt::{format::Writer, FmtContext, FormatEvent, FormatFields};
+use tracing_subscriber::registry::LookupSpan;
+use std::fmt;
+use std::cell::RefCell;
+use std::time::Instant;
 
 impl From<LogLevel> for LevelFilter {
     fn from(level: LogLevel) -> Self {
@@ -79,6 +84,114 @@ where
     }
 }
 
+struct CustomFormatter {
+    timer: Box<dyn tracing_subscriber::fmt::time::FormatTime + Send + Sync + 'static>,
+    ansi: bool,
+    display_timestamp: bool,
+}
+
+thread_local! {
+    static THREAD_START_TIME: Instant = Instant::now();
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let micros = d.as_micros();
+    if micros < 1000 {
+        format!("{}us", micros)
+    } else if micros < 1_000_000 {
+        format!("{:.2}ms", micros as f64 / 1000.0)
+    } else {
+        let secs = d.as_secs();
+        if secs < 60 {
+            format!("{:.2}s", d.as_secs_f64())
+        } else if secs < 3600 {
+            format!("{}m{}s", secs / 60, secs % 60)
+        } else if secs < 86400 {
+            format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+        } else {
+            format!("{}d{}h", secs / 86400, (secs % 86400) / 3600)
+        }
+    }
+}
+
+impl<S, N> FormatEvent<S, N> for CustomFormatter
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> fmt::Result {
+        let meta = event.metadata();
+
+        if self.display_timestamp {
+             self.timer.format_time(&mut writer)?;
+             writer.write_char(' ')?;
+        }
+
+        if self.ansi {
+             // Level
+             let level = *meta.level();
+             let color = match level {
+                 tracing::Level::TRACE => "\x1b[35m",
+                 tracing::Level::DEBUG => "\x1b[34m",
+                 tracing::Level::INFO => "\x1b[32m",
+                 tracing::Level::WARN => "\x1b[33m",
+                 tracing::Level::ERROR => "\x1b[31m",
+             };
+             write!(writer, "{}{:>5}\x1b[0m ", color, level.as_str())?;
+             
+             // Thread ID
+             let thread_id = std::thread::current().id();
+             let tid_str = format!("{:?}", thread_id);
+             // Simple hash
+             let mut hash: u32 = 0;
+             for b in tid_str.bytes() {
+                 hash = hash.wrapping_add(b as u32);
+                 hash = hash.wrapping_mul(31);
+             }
+             
+             // Use 256 colors, avoiding 0-16 (standard colors) and 232-255 (grayscale)
+             // We map to 17-231 (216 colors)
+             let color_code = (hash % 214) + 17;
+             write!(writer, "\x1b[38;5;{}m{:?}\x1b[0m ", color_code, thread_id)?;
+
+        } else {
+             write!(writer, "{:>5} ", meta.level().as_str())?;
+             write!(writer, "{:?} ", std::thread::current().id())?;
+        }
+
+        // Duration since thread start
+        let now = Instant::now();
+        let duration = THREAD_START_TIME.with(|start_time| {
+            now.duration_since(*start_time)
+        });
+        
+        let duration_str = format_duration(duration);
+
+        if self.ansi {
+             write!(writer, "\x1b[2m{:>8}\x1b[0m ", duration_str)?;
+        } else {
+             write!(writer, "{:>8} ", duration_str)?;
+        }
+        
+        // File/Line
+        if let (Some(file), Some(line)) = (meta.file(), meta.line()) {
+             if self.ansi {
+                 write!(writer, "\x1b[2m{}:{}\x1b[0m ", file, line)?;
+             } else {
+                 write!(writer, "{}:{} ", file, line)?;
+             }
+        }
+        
+        ctx.format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
+    }
+}
+
 struct LoggingGuard {
     _file_appender: Option<tracing_appender::non_blocking::WorkerGuard>,
     #[cfg(feature = "tracing")]
@@ -95,6 +208,7 @@ pub fn setup_logging(
     collector: EventCollector,
     cwd: &str,
     log_file: Option<String>,
+    log_timestamp: bool,
 ) {
     unsafe {
         SETUP_LOGGING.call_once(|| {
@@ -104,7 +218,7 @@ pub fn setup_logging(
                      have been initialized"
                 );
             });
-            LOGGING_GUARD = setup_logging_inner(level, collector, cwd, log_file)
+            LOGGING_GUARD = setup_logging_inner(level, collector, cwd, log_file, log_timestamp)
                 .unwrap_or_else(|e| {
                     eprintln!("Failed to setup logging: {e}");
                     None
@@ -118,6 +232,7 @@ fn setup_logging_inner(
     collector: EventCollector,
     cwd: &str,
     log_file: Option<String>,
+    log_timestamp: bool,
 ) -> anyhow::Result<Option<LoggingGuard>> {
     let default_log_level = format!("warn,clash={level}");
     let filter = EnvFilter::try_from_default_env()
@@ -217,27 +332,32 @@ fn setup_logging_inner(
     ));
 
     let log_to_file_layer = appender.map(|x| {
-        tracing_subscriber::fmt::Layer::new()
-            .with_timer(timer.clone())
+        let layer = tracing_subscriber::fmt::Layer::new()
             .with_ansi(false)
             .compact()
             .with_file(true)
             .with_line_number(true)
             .with_level(true)
-            .with_writer(x)
-            .with_filter(exclude.clone())
+            .with_writer(x);
+        if log_timestamp {
+            layer
+                .with_timer(timer.clone())
+                .with_filter(exclude.clone())
+                .boxed()
+        } else {
+            layer.without_time().with_filter(exclude.clone()).boxed()
+        }
     });
     let log_stdout_layer = tracing_subscriber::fmt::Layer::new()
-        .with_timer(timer)
-        .with_ansi(std::io::stdout().is_terminal())
-        .compact()
-        .with_target(cfg!(debug_assertions))
-        .with_file(true)
-        .with_line_number(true)
-        .with_level(true)
-        .with_thread_ids(cfg!(debug_assertions))
+        .event_format(CustomFormatter {
+            timer: Box::new(timer.clone()),
+            ansi: std::io::stdout().is_terminal(),
+            display_timestamp: log_timestamp,
+        })
         .with_writer(std::io::stdout)
         .with_filter(exclude.clone());
+
+    let log_stdout_layer = log_stdout_layer.boxed();
 
     let subscriber = {
         #[cfg(feature = "tracing")]

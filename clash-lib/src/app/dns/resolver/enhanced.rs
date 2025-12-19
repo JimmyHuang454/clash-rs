@@ -1,6 +1,9 @@
 use crate::{
     Error,
-    app::{dns::helper::build_dns_response_message, profile::ThreadSafeCacheFile},
+    app::{
+        dns::helper::build_dns_response_message,
+        profile::{GeoIPCacheEntry, ThreadSafeCacheFile},
+    },
     common::{mmdb::MmdbLookup, trie},
     config::def::DNSMode,
     dns::{
@@ -46,6 +49,12 @@ pub struct EnhancedResolver {
 
     reverse_lookup_cache:
         Option<Arc<RwLock<lru_time_cache::LruCache<net::IpAddr, String>>>>,
+
+    store: Option<ThreadSafeCacheFile>,
+    geo_ip_cache_expiration: Option<u64>,
+    geo_ip_code: Option<String>,
+    mmdb: Option<MmdbLookup>,
+    match_noproxy: bool,
 }
 
 impl EnhancedResolver {
@@ -80,6 +89,11 @@ impl EnhancedResolver {
             fake_dns: None,
 
             reverse_lookup_cache: None,
+            store: None,
+            geo_ip_cache_expiration: None,
+            geo_ip_code: None,
+            mmdb: None,
+            match_noproxy: false,
         }
     }
 
@@ -109,6 +123,11 @@ impl EnhancedResolver {
             fake_dns: None,
 
             reverse_lookup_cache: None,
+            store: None,
+            geo_ip_cache_expiration: None,
+            geo_ip_code: None,
+            mmdb: None,
+            match_noproxy: false,
         });
 
         Self {
@@ -152,7 +171,7 @@ impl EnhancedResolver {
 
                 filters.push(Box::new(GeoIPFilter::new(
                     &cfg.fallback_filter.geo_ip_code,
-                    mmdb,
+                    mmdb.clone(),
                 )) as Box<dyn FallbackIPFilter>);
 
                 if let Some(ipcidr) = &cfg.fallback_filter.ip_cidr {
@@ -211,7 +230,7 @@ impl EnhancedResolver {
                             None
                         },
                         store: if cfg.store_fake_ip {
-                            Box::new(FileStore::new(store))
+                            Box::new(FileStore::new(store.clone()))
                         } else {
                             Box::new(InMemStore::new(1000))
                         },
@@ -237,6 +256,15 @@ impl EnhancedResolver {
                     4096,
                 ),
             ))),
+            store: Some(store),
+            geo_ip_cache_expiration: cfg.fallback_filter.geo_ip_cache_expiration,
+            geo_ip_code: if cfg.fallback_filter.geo_ip {
+                Some(cfg.fallback_filter.geo_ip_code)
+            } else {
+                None
+            },
+            mmdb: if cfg.fallback_filter.geo_ip { mmdb.clone() } else { None },
+            match_noproxy: cfg.fallback_filter.match_noproxy,
         }
     }
 
@@ -407,6 +435,51 @@ impl EnhancedResolver {
             .await;
         }
 
+        let mut skip_ip_check = false;
+
+        if let Some(store) = &self.store
+            && let Some(code) = &self.geo_ip_code
+            && let Some(domain) = EnhancedResolver::domain_name_of_message(message)
+        {
+            if let Some(entry) = store.get_domain_geoip(&domain).await {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                if entry.expires_at > now {
+                    debug!("geoip cache hit: {} -> {}", domain, entry.code);
+                    if &entry.code != code {
+                        // Force fallback
+                        if self.match_noproxy {
+                            if let Some(fake_dns) = &self.fake_dns {
+                                let ip = fake_dns.write().await.lookup(&domain).await;
+                                let mut reply = build_dns_response_message(message, true, false);
+                                let mut record = rr::Record::from_rdata(
+                                    rr::Name::from_str_relaxed(domain).unwrap().append_domain(&rr::Name::root()).unwrap(),
+                                    10,
+                                    match ip {
+                                        net::IpAddr::V4(v4) => rr::RData::A(rr::rdata::A(v4)),
+                                        net::IpAddr::V6(v6) => rr::RData::AAAA(rr::rdata::AAAA(v6)),
+                                    },
+                                );
+                                reply.add_answer(record);
+                                return Ok(reply);
+                            }
+                        }
+
+                        return EnhancedResolver::batch_exchange(
+                            self.fallback.as_ref().unwrap(),
+                            message,
+                        )
+                        .await;
+                    } else {
+                        // Trust main, skip check
+                        skip_ip_check = true;
+                    }
+                }
+            }
+        }
+
         let main_query = EnhancedResolver::batch_exchange(&self.main, message);
 
         if self.fallback.is_none() {
@@ -420,8 +493,33 @@ impl EnhancedResolver {
 
         if let Ok(main_result) = main_query.await {
             let ip_list = EnhancedResolver::ip_list_of_message(&main_result);
-            if !ip_list.is_empty() && !self.should_ip_fallback(&ip_list[0]) {
-                return Ok(main_result);
+            if !ip_list.is_empty() {
+                if !skip_ip_check {
+                    let domain = EnhancedResolver::domain_name_of_message(message);
+                    if let Some(domain) = domain {
+                        self.update_geoip_cache(&domain, ip_list[0]).await;
+                    }
+                }
+
+                if skip_ip_check || !self.should_ip_fallback(&ip_list[0]) {
+                    return Ok(main_result);
+                } else if self.match_noproxy {
+                    if let Some(fake_dns) = &self.fake_dns {
+                        let domain = EnhancedResolver::domain_name_of_message(message).unwrap_or_default();
+                        let ip = fake_dns.write().await.lookup(&domain).await;
+                        let mut reply = build_dns_response_message(message, true, false);
+                        let mut record = rr::Record::from_rdata(
+                            rr::Name::from_str_relaxed(&domain).unwrap().append_domain(&rr::Name::root()).unwrap(),
+                            10,
+                            match ip {
+                                net::IpAddr::V4(v4) => rr::RData::A(rr::rdata::A(v4)),
+                                net::IpAddr::V6(v6) => rr::RData::AAAA(rr::rdata::AAAA(v6)),
+                            },
+                        );
+                        reply.add_answer(record);
+                        return Ok(reply);
+                    }
+                }
             }
         }
 
@@ -451,6 +549,27 @@ impl EnhancedResolver {
             }
         }
         false
+    }
+
+    async fn update_geoip_cache(&self, domain: &str, ip: net::IpAddr) {
+        if let Some(store) = &self.store
+            && let Some(mmdb) = &self.mmdb
+        {
+            if let Ok(country) = mmdb.lookup_country(ip) {
+                let code = country.country_code;
+                let expiration = self.geo_ip_cache_expiration.unwrap_or(24 * 3600);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let entry = GeoIPCacheEntry {
+                    code: code.clone(),
+                    expires_at: now + expiration,
+                };
+                debug!("updating geoip cache: {} -> {}", domain, code);
+                store.set_domain_geoip(domain, entry).await;
+            }
+        }
     }
 
     // helpers

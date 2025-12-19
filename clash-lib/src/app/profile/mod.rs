@@ -15,6 +15,14 @@ struct Db {
     smart_stats: HashMap<String, crate::proxy::group::smart::state::SmartStateData>,
     #[serde(default)]
     smart_policy_priority: HashMap<String, String>,
+    #[serde(default)]
+    domain_geoip: HashMap<String, GeoIPCacheEntry>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GeoIPCacheEntry {
+    pub code: String,
+    pub expires_at: u64,
 }
 
 #[derive(Clone)]
@@ -122,6 +130,22 @@ impl ThreadSafeCacheFile {
         let g = self.0.read().await;
         g.get_smart_stats(group_name)
     }
+
+    pub async fn get_domain_geoip(&self, domain: &str) -> Option<GeoIPCacheEntry> {
+        let g = self.0.read().await;
+        if g.store_selected() {
+            g.db.domain_geoip.get(domain).cloned()
+        } else {
+            None
+        }
+    }
+
+    pub async fn set_domain_geoip(&self, domain: &str, entry: GeoIPCacheEntry) {
+        let mut g = self.0.write().await;
+        if g.store_selected() {
+            g.db.domain_geoip.insert(domain.to_string(), entry);
+        }
+    }
 }
 
 struct CacheFile {
@@ -146,6 +170,7 @@ impl CacheFile {
                         host_to_ip: HashMap::new(),
                         smart_stats: HashMap::new(),
                         smart_policy_priority: HashMap::new(),
+                        domain_geoip: HashMap::new(),
                     }
                 }
             },
@@ -157,6 +182,7 @@ impl CacheFile {
                     host_to_ip: HashMap::new(),
                     smart_stats: HashMap::new(),
                     smart_policy_priority: HashMap::new(),
+                    domain_geoip: HashMap::new(),
                 }
             }
         };
