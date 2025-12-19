@@ -69,6 +69,7 @@ async fn get_configs(State(state): State<ConfigState>) -> impl IntoResponse {
 
         mode: Some(run_mode),
         log_level: Some(global_state.log_level),
+        log_timestamp: Some(global_state.log_timestamp),
         ipv6: Some(dns_resolver.ipv6()),
         allow_lan: Some(inbound_manager.get_allow_lan().await),
     })
@@ -156,6 +157,7 @@ struct PatchConfigRequest {
     bind_address: Option<String>,
     mode: Option<def::RunMode>,
     log_level: Option<def::LogLevel>,
+    log_timestamp: Option<bool>,
     ipv6: Option<bool>,
     allow_lan: Option<bool>,
 }
@@ -225,6 +227,10 @@ async fn patch_configs(
 
     if let Some(log_level) = payload.log_level {
         global_state.log_level = log_level;
+    }
+
+    if let Some(log_timestamp) = payload.log_timestamp {
+        global_state.log_timestamp = log_timestamp;
     }
 
     if let Some(ipv6) = payload.ipv6 {

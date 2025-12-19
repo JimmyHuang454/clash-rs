@@ -63,6 +63,7 @@ pub struct General {
     pub(crate) controller: Controller,
     pub mode: RunMode,
     pub log_level: LogLevel,
+    pub log_timestamp: bool,
     pub ipv6: bool,
     pub interface: Option<Interface>,
     pub routing_mask: Option<u32>,

@@ -25,6 +25,7 @@ pub(super) fn convert(c: &def::Config) -> Result<General, crate::Error> {
         },
         mode: c.mode,
         log_level: c.log_level,
+        log_timestamp: c.log_timestamp,
         ipv6: c.ipv6,
         interface: c.interface.as_ref().map(|iface| {
             if let Ok(addr) = iface.parse::<IpAddr>() {
@@ -42,4 +43,23 @@ pub(super) fn convert(c: &def::Config) -> Result<General, crate::Error> {
         geosite_download_url: c.geosite_download_url.to_owned(),
         bind_address,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::def::Config;
+
+    #[test]
+    fn test_convert_log_timestamp() {
+        let mut def_config = Config::default();
+        def_config.log_timestamp = false;
+
+        let general = convert(&def_config).unwrap();
+        assert!(!general.log_timestamp);
+
+        def_config.log_timestamp = true;
+        let general = convert(&def_config).unwrap();
+        assert!(general.log_timestamp);
+    }
 }

@@ -1,4 +1,6 @@
 mod enhanced;
+#[cfg(test)]
+mod tests;
 
 #[cfg(all(target_feature = "crt-static", target_env = "gnu"))]
 #[path = "system_static_crt.rs"]

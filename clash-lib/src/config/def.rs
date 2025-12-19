@@ -24,6 +24,10 @@ fn default_route_table() -> u32 {
     DEFAULT_ROUTE_TABLE
 }
 
+fn default_log_timestamp() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DnsHijack {
@@ -392,6 +396,8 @@ pub struct Config {
     /// Log level
     /// Either `debug`, `info`, `warning`, `error` or `off`
     pub log_level: LogLevel,
+    #[serde(default = "default_log_timestamp", alias = "log-timestamp")]
+    pub log_timestamp: bool,
     /// DNS client/server settings
     pub dns: DNS,
     /// Profile settings
@@ -597,6 +603,13 @@ pub struct FallbackFilter {
     #[serde(rename = "geoip-code")]
     #[educe(Default = "CN")]
     pub geo_ip_code: String,
+
+    #[serde(rename = "geoip-cache-expiration")]
+    pub geo_ip_cache_expiration: Option<u64>,
+
+    #[serde(rename = "match-noproxy")]
+    #[educe(Default = false)]
+    pub match_noproxy: bool,
 
     #[serde(rename = "ipcidr")]
     pub ip_cidr: Vec<String>,

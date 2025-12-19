@@ -6,10 +6,53 @@
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 use human_panic::{Metadata, setup_panic};
-#[cfg(all(feature = "jemallocator", not(feature = "dhat-heap")))]
+
+#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap")))]
+#[global_allocator]
+static GLOBAL: LimitedAllocator = LimitedAllocator;
+
+#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap")))]
+struct LimitedAllocator;
+
+#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap")))]
+static CURRENT_USAGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(all(feature = "mimalloc", not(feature = "dhat-heap")))]
+unsafe impl std::alloc::GlobalAlloc for LimitedAllocator {
+    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+        let ptr = unsafe { mimalloc::MiMalloc.alloc(layout) };
+        if !ptr.is_null() {
+             let limit = clash::ALLOCATOR_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+             if limit > 0 {
+                  let old = CURRENT_USAGE.fetch_add(layout.size() as u64, std::sync::atomic::Ordering::Relaxed);
+                  if old + layout.size() as u64 > limit {
+                      static GC_IN_PROGRESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                      if !GC_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::Acquire) {
+                          unsafe extern "C" {
+                              fn mi_collect(force: bool);
+                          }
+                          unsafe { mi_collect(false); }
+                          GC_IN_PROGRESS.store(false, std::sync::atomic::Ordering::Release);
+                      }
+                  }
+             }
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        unsafe { mimalloc::MiMalloc.dealloc(ptr, layout); }
+        let limit = clash::ALLOCATOR_LIMIT.load(std::sync::atomic::Ordering::Relaxed);
+        if limit > 0 {
+             CURRENT_USAGE.fetch_sub(layout.size() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(all(feature = "jemallocator", not(feature = "mimalloc"), not(feature = "dhat-heap")))]
 use tikv_jemallocator::Jemalloc;
 
-#[cfg(all(feature = "jemallocator", not(feature = "dhat-heap")))]
+#[cfg(all(feature = "jemallocator", not(feature = "mimalloc"), not(feature = "dhat-heap")))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
