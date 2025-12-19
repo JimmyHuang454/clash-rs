@@ -145,9 +145,12 @@ impl TryFrom<String> for MemoryLimit {
             // Or maybe KB?
             // Let's stick to what was asked: MB and GB.
             // But good to support raw bytes too as fallback or just parse.
-            let val: u64 = s
-                .parse()
-                .map_err(|_| format!("invalid memory limit format (expected '50MB' or '1GB'): {}", s))?;
+            let val: u64 = s.parse().map_err(|_| {
+                format!(
+                    "invalid memory limit format (expected '50MB' or '1GB'): {}",
+                    s
+                )
+            })?;
             Ok(MemoryLimit(val))
         }
     }

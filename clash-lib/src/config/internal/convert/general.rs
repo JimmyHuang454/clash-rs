@@ -67,9 +67,9 @@ mod tests {
     #[test]
     fn test_convert_allocator_limit() {
         use crate::config::def::MemoryLimit;
-        
+
         let mut def_config = Config::default();
-        
+
         // Test None
         let general = convert(&def_config).unwrap();
         assert!(general.allocator_limit.is_none());
