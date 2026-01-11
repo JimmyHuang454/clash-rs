@@ -391,6 +391,7 @@ pub enum Type {
     Redir,
     Tunnel,
     Shadowsocks,
+    Trojan,
     Ignore,
 }
 

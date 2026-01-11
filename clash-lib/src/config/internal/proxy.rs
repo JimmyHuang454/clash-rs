@@ -242,6 +242,14 @@ pub struct OutboundTrojan {
     pub network: Option<String>,
     pub grpc_opts: Option<GrpcOpt>,
     pub ws_opts: Option<WsOpt>,
+    pub quic_opts: Option<QuicOpt>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct QuicOpt {
+    #[serde(alias = "congestion-controller")]
+    pub congestion_controller: Option<String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Default)]

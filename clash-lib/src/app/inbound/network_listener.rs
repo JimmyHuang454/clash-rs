@@ -4,7 +4,7 @@ use crate::{
     config::listener::InboundOpts,
     proxy::{
         http::HttpInbound, inbound::InboundHandlerTrait, mixed::MixedInbound,
-        socks::inbound::SocksInbound, tunnel::TunnelInbound,
+        socks::inbound::SocksInbound, tunnel::TunnelInbound, trojan::inbound::TrojanInbound,
     },
 };
 
@@ -177,5 +177,27 @@ fn build_handler(
             authenticator,
             fw_mark: common_opts.fw_mark,
         }))),
+        InboundOpts::Trojan {
+            common_opts,
+            udp: _,
+            password,
+            certificate,
+            private_key,
+            alpn,
+            network,
+            congestion_controller,
+        } => Some(Arc::new(TrojanInbound::new(
+            (common_opts.listen.0, common_opts.port).into(),
+            common_opts.allow_lan,
+            dispatcher,
+            authenticator,
+            fw_mark,
+            password.clone(),
+            certificate.clone(),
+            private_key.clone(),
+            alpn.clone(),
+            network.clone(),
+            congestion_controller.clone(),
+        ))),
     }
 }

@@ -48,7 +48,9 @@ unsafe impl std::alloc::GlobalAlloc for LimitedAllocator {
                     layout.size() as u64,
                     std::sync::atomic::Ordering::Relaxed,
                 );
-                check_and_perform_gc(old + layout.size() as u64);
+                unsafe {
+                    check_and_perform_gc(old + layout.size() as u64);
+                }
             }
         }
         ptr
@@ -65,7 +67,9 @@ unsafe impl std::alloc::GlobalAlloc for LimitedAllocator {
                 layout.size() as u64,
                 std::sync::atomic::Ordering::Relaxed,
             );
-            check_and_perform_gc(old.saturating_sub(layout.size() as u64));
+            unsafe {
+                check_and_perform_gc(old.saturating_sub(layout.size() as u64));
+            }
         }
     }
 }

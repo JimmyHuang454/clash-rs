@@ -193,7 +193,7 @@ fn setup_logging_inner(
     log_file: Option<String>,
     log_timestamp: bool,
 ) -> anyhow::Result<Option<LoggingGuard>> {
-    let default_log_level = format!("warn,clash={level}");
+    let default_log_level = format!("warn,clash={level},tquic={level}");
     let filter = EnvFilter::try_from_default_env()
         .inspect(|f| {
             eprintln!("using env log level: {f}");

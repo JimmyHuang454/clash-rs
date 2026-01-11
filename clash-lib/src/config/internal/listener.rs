@@ -57,6 +57,23 @@ pub enum InboundOpts {
         cipher: String,
         password: String,
     },
+    #[serde(alias = "trojan")]
+    Trojan {
+        #[serde(flatten)]
+        common_opts: CommonInboundOpts,
+        #[serde(default = "default_bool_true")]
+        udp: bool,
+        password: String,
+        certificate: String,
+        #[serde(rename = "private-key")]
+        private_key: String,
+        #[serde(default)]
+        alpn: Vec<String>,
+        #[serde(default)]
+        network: Option<String>,
+        #[serde(alias = "congestion-controller")]
+        congestion_controller: Option<String>,
+    },
 }
 
 impl InboundOpts {
@@ -72,6 +89,7 @@ impl InboundOpts {
             InboundOpts::Redir { common_opts, .. } => common_opts,
             #[cfg(feature = "shadowsocks")]
             InboundOpts::Shadowsocks { common_opts, .. } => common_opts,
+            InboundOpts::Trojan { common_opts, .. } => common_opts,
         }
     }
 
@@ -87,6 +105,7 @@ impl InboundOpts {
             InboundOpts::Redir { common_opts, .. } => common_opts,
             #[cfg(feature = "shadowsocks")]
             InboundOpts::Shadowsocks { common_opts, .. } => common_opts,
+            InboundOpts::Trojan { common_opts, .. } => common_opts,
         }
     }
 }

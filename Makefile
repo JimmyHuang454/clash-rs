@@ -4,6 +4,9 @@
 test-geoip:
 	cargo test -p clash-lib --lib app::dns::resolver::tests
 
+test-tquic:
+	cargo test -p clash-lib --lib proxy::trojan::test_tquic::test_trojan_tquic
+
 docs:
 	@rm -rf ./docs
 	@cargo doc -p clash_doc --no-deps
@@ -20,8 +23,9 @@ test-geoip-routing:
 test-run-mimalloc: build-mimalloc
 	./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
 
-test-run: build
-	./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
+test-run: build-mimalloc
+	# ./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
+	./target/debug/clash-rs -c ./clash-bin/tests/data/config/tquic.yaml
 
 build:
 	cargo build

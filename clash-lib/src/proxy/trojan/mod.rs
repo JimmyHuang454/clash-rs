@@ -29,6 +29,14 @@ use super::{
 };
 
 mod datagram;
+pub mod inbound;
+pub mod quic;
+pub mod tquic;
+
+#[cfg(test)]
+mod test_inbound;
+#[cfg(test)]
+mod test_tquic;
 
 pub struct HandlerOptions {
     pub name: String,
@@ -40,6 +48,8 @@ pub struct HandlerOptions {
     // might support shadow-tls?
     pub tls: Option<Box<dyn Transport>>,
     pub transport: Option<Box<dyn Transport>>,
+    pub quic_client: Option<Arc<quic::QuicClient>>,
+    pub tquic_client: Option<Arc<tquic::TQuicClient>>,
 }
 
 pub struct Handler {
@@ -168,16 +178,31 @@ impl OutboundHandler for Handler {
         resolver: ThreadSafeDNSResolver,
         connector: &dyn RemoteConnector,
     ) -> io::Result<BoxedChainedStream> {
-        let stream = connector
-            .connect_stream(
-                resolver,
-                self.opts.server.as_str(),
+        let stream = if let Some(qc) = &self.opts.quic_client {
+            let s = qc.open_stream(&resolver).await?;
+            Box::new(s) as AnyStream
+        } else if let Some(tqc) = &self.opts.tquic_client {
+            let s = tqc.open_stream(
+                &self.opts.server,
                 self.opts.port,
-                sess.iface.as_ref(),
-                #[cfg(target_os = "linux")]
-                sess.so_mark,
-            )
-            .await?;
+                // TODO: use sni from opts if available
+                &self.opts.server,
+                &["h3".to_string()], // TODO: use alpn
+                &resolver
+            ).await?;
+            Box::new(s) as AnyStream
+        } else {
+            connector
+                .connect_stream(
+                    resolver,
+                    self.opts.server.as_str(),
+                    self.opts.port,
+                    sess.iface.as_ref(),
+                    #[cfg(target_os = "linux")]
+                    sess.so_mark,
+                )
+                .await?
+        };
 
         let s = self.inner_proxy_stream(stream, sess, false).await?;
         let chained = ChainedStreamWrapper::new(s);
@@ -191,16 +216,30 @@ impl OutboundHandler for Handler {
         resolver: ThreadSafeDNSResolver,
         connector: &dyn RemoteConnector,
     ) -> io::Result<BoxedChainedDatagram> {
-        let stream = connector
-            .connect_stream(
-                resolver,
-                self.opts.server.as_str(),
+        let stream = if let Some(qc) = &self.opts.quic_client {
+            let s = qc.open_stream(&resolver).await?;
+            Box::new(s) as AnyStream
+        } else if let Some(tqc) = &self.opts.tquic_client {
+            let s = tqc.open_stream(
+                &self.opts.server,
                 self.opts.port,
-                sess.iface.as_ref(),
-                #[cfg(target_os = "linux")]
-                sess.so_mark,
-            )
-            .await?;
+                &self.opts.server,
+                &["h3".to_string()],
+                &resolver
+            ).await?;
+            Box::new(s) as AnyStream
+        } else {
+            connector
+                .connect_stream(
+                    resolver,
+                    self.opts.server.as_str(),
+                    self.opts.port,
+                    sess.iface.as_ref(),
+                    #[cfg(target_os = "linux")]
+                    sess.so_mark,
+                )
+                .await?
+        };
 
         let stream = self.inner_proxy_stream(stream, sess, true).await?;
 

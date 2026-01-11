@@ -454,7 +454,7 @@ impl EnhancedResolver {
                             if let Some(fake_dns) = &self.fake_dns {
                                 let ip = fake_dns.write().await.lookup(&domain).await;
                                 let mut reply = build_dns_response_message(message, true, false);
-                                let mut record = rr::Record::from_rdata(
+                                let record = rr::Record::from_rdata(
                                     rr::Name::from_str_relaxed(domain).unwrap().append_domain(&rr::Name::root()).unwrap(),
                                     10,
                                     match ip {
@@ -508,7 +508,7 @@ impl EnhancedResolver {
                         let domain = EnhancedResolver::domain_name_of_message(message).unwrap_or_default();
                         let ip = fake_dns.write().await.lookup(&domain).await;
                         let mut reply = build_dns_response_message(message, true, false);
-                        let mut record = rr::Record::from_rdata(
+                        let record = rr::Record::from_rdata(
                             rr::Name::from_str_relaxed(&domain).unwrap().append_domain(&rr::Name::root()).unwrap(),
                             10,
                             match ip {
