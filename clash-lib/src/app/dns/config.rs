@@ -63,6 +63,7 @@ pub struct Config {
     pub hosts: Option<trie::StringTrie<IpAddr>>,
     pub nameserver_policy: HashMap<String, NameServer>,
     pub edns_client_subnet: Option<EdnsClientSubnet>,
+    pub fw_mark: Option<u32>,
 }
 
 impl Config {
@@ -283,6 +284,7 @@ impl TryFrom<&crate::config::def::Config> for Config {
         Ok(Self {
             enable: dc.enable,
             ipv6: c.ipv6 && dc.ipv6,
+            fw_mark: c.routing_mark,
             nameserver: nameservers,
             fallback,
             fallback_filter: dc.fallback_filter.clone().into(),

@@ -78,6 +78,7 @@ impl EnhancedResolver {
                 None,
                 HashMap::new(),
                 None,
+                None,
             )
             .await,
             fallback: None,
@@ -112,6 +113,7 @@ impl EnhancedResolver {
                 None,
                 outbounds.clone(),
                 edns_client_subnet.clone(),
+                cfg.fw_mark,
             )
             .await,
             fallback: None,
@@ -137,6 +139,7 @@ impl EnhancedResolver {
                 Some(default_resolver.clone()),
                 outbounds.clone(),
                 edns_client_subnet.clone(),
+                cfg.fw_mark,
             )
             .await,
             hosts: cfg.hosts,
@@ -147,6 +150,7 @@ impl EnhancedResolver {
                         Some(default_resolver.clone()),
                         outbounds.clone(),
                         edns_client_subnet.clone(),
+                        cfg.fw_mark,
                     )
                     .await,
                 )
@@ -207,6 +211,7 @@ impl EnhancedResolver {
                                 Some(default_resolver.clone()),
                                 outbounds.clone(),
                                 edns_client_subnet.clone(),
+                                cfg.fw_mark,
                             )
                             .await,
                         ),
@@ -844,6 +849,7 @@ mod tests {
             iface: None,
             proxy: get_default_outbound(),
             ecs: None,
+            fw_mark: None,
         })
         .await
         .expect("build client");
@@ -862,6 +868,7 @@ mod tests {
             iface: None,
             proxy: get_default_outbound(),
             ecs: None,
+            fw_mark: None,
         })
         .await
         .expect("build client");
@@ -880,6 +887,7 @@ mod tests {
             iface: None,
             proxy: get_default_outbound(),
             ecs: None,
+            fw_mark: None,
         })
         .await
         .expect("build client");
@@ -900,6 +908,7 @@ mod tests {
             iface: None,
             proxy: get_default_outbound(),
             ecs: None,
+            fw_mark: None,
         })
         .await
         .expect("build client");
@@ -918,6 +927,7 @@ mod tests {
             iface: None,
             proxy: get_default_outbound(),
             ecs: None,
+            fw_mark: None,
         })
         .await
         .expect("build client");
