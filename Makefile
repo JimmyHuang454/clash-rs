@@ -20,7 +20,7 @@ test-no-docker:
 test-geoip-routing:
 	cd test_routing && cargo run
 
-test-run-mimalloc: build-mimalloc
+test-geoip-run: build-mimalloc
 	./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
 
 test-run: release-mimalloc
