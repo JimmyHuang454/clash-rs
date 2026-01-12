@@ -247,7 +247,20 @@ impl InboundHandlerTrait for TrojanInbound {
             let rt = rt.unwrap();
 
             let res = rt.block_on(async {
-                let socket = Arc::new(UdpSocket::bind(addr).await?);
+                // Try to set SO_REUSEADDR and SO_REUSEPORT
+                let socket = socket2::Socket::new(
+                    if addr.is_ipv6() { socket2::Domain::IPV6 } else { socket2::Domain::IPV4 },
+                    socket2::Type::DGRAM,
+                    None,
+                )?;
+                
+                socket.set_nonblocking(true)?;
+                socket.set_reuse_address(true)?;
+                #[cfg(all(unix, not(target_os = "solaris"), not(target_os = "illumos")))]
+                socket.set_reuse_port(true)?;
+
+                socket.bind(&addr.into())?;
+                let socket = Arc::new(UdpSocket::from_std(socket.into())?);
                 info!("Trojan TQuic listening on {}", addr);
 
                 let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
@@ -283,11 +296,13 @@ impl InboundHandlerTrait for TrojanInbound {
                     config.set_congestion_control_algorithm(tquic::CongestionControlAlgorithm::Bbr);
                 }
 
-                config.set_max_idle_timeout(30000);
-                config.set_initial_max_streams_bidi(100);
-                config.set_initial_max_data(100_000_000);
-                config.set_initial_max_stream_data_bidi_local(50_000_000);
-                config.set_initial_max_stream_data_bidi_remote(50_000_000);
+                // config.set_max_idle_timeout(30000);
+                // config.set_initial_max_streams_bidi(100);
+                // config.set_initial_max_data(10_000_000_000);
+                // config.set_initial_max_stream_data_bidi_local(5_000_000_000);
+                // config.set_initial_max_stream_data_bidi_remote(5_000_000_000);
+                // config.set_initial_congestion_window(2048);
+                // config.set_min_congestion_window(512);
 
                 let tls_config = tquic::TlsConfig::new_server_config(
                     &cert_path,

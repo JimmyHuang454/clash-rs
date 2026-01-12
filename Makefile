@@ -23,9 +23,9 @@ test-geoip-routing:
 test-run-mimalloc: build-mimalloc
 	./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
 
-test-run: build-mimalloc
+test-run: release-mimalloc
 	# ./target/debug/clash-rs -c ./clash-bin/tests/data/config/geoip-fallback-test.yaml
-	./target/debug/clash-rs -c ./clash-bin/tests/data/config/tquic.yaml
+	./target/release/clash-rs -c ./clash-bin/tests/data/config/tquic.yaml
 
 build:
 	cargo build

@@ -208,11 +208,11 @@ async fn test_trojan_tquic() {
             tx.send(port).unwrap();
             
             let mut config = tquic::Config::new().unwrap();
-            config.set_max_idle_timeout(30000);
-            config.set_initial_max_streams_bidi(100);
-            config.set_initial_max_data(10_000_000);
-            config.set_initial_max_stream_data_bidi_local(1_000_000);
-            config.set_initial_max_stream_data_bidi_remote(1_000_000);
+            // config.set_max_idle_timeout(30000);
+            // config.set_initial_max_streams_bidi(100);
+            // config.set_initial_max_data(10_000_000);
+            // config.set_initial_max_stream_data_bidi_local(1_000_000);
+            // config.set_initial_max_stream_data_bidi_remote(1_000_000);
             
             let tls_config = tquic::TlsConfig::new_server_config(
                 &cert_path,

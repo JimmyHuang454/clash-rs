@@ -96,8 +96,15 @@ ry1bYSTmtzqweMpF3Lff8wavwQZERUY9PaWS+L902CoFkSJoUCb5c/rShikjWjpw
 -----END PRIVATE KEY-----
 "#;
 
-async fn run_cc_test(algo: &str, port_base: u16) {
-    println!("Testing congestion controller: {}", algo);
+#[derive(Clone, Copy, Debug)]
+enum TestMode {
+    Echo,
+    Upload,
+    Download,
+}
+
+async fn run_benchmark(algo: &str, mode: TestMode, port_base: u16) {
+    println!("Testing {} with mode: {:?}", algo, mode);
     
     // 1. Setup certs
     let mut cert_file = NamedTempFile::new().unwrap();
@@ -115,34 +122,67 @@ async fn run_cc_test(algo: &str, port_base: u16) {
     let http_port = port_base + 5;
     let socks_port = port_base + 6;
 
-    // 2. Start Echo Server (Target)
-    let echo_server = tokio::spawn(async move {
+    const TOTAL_SIZE: usize = 100 * 1024 * 1024; // 100 MB
+    const CHUNK_SIZE: usize = 64 * 1024;
+
+    // 2. Start Target Server
+    let server_handle = tokio::spawn(async move {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", echo_port)).await.unwrap();
-        // Accept one connection for the test
+        
         if let Ok((mut socket, _)) = listener.accept().await {
-            let mut buf = [0u8; 65536];
-            loop {
-                match socket.read(&mut buf).await {
-                    Ok(n) if n == 0 => break,
-                    Ok(n) => {
-                        if socket.write_all(&buf[..n]).await.is_err() {
-                            break;
+            match mode {
+                TestMode::Echo => {
+                    let mut buf = [0u8; CHUNK_SIZE];
+                    loop {
+                        match socket.read(&mut buf).await {
+                            Ok(n) if n == 0 => break,
+                            Ok(n) => {
+                                if socket.write_all(&buf[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
                         }
                     }
-                    Err(_) => break,
+                }
+                TestMode::Upload => {
+                    // Read and discard
+                    let mut buf = [0u8; CHUNK_SIZE];
+                    let mut total_read = 0;
+                    loop {
+                        match socket.read(&mut buf).await {
+                            Ok(n) if n == 0 => break,
+                            Ok(n) => total_read += n,
+                            Err(_) => break,
+                        }
+                    }
+                    // println!("Server received total: {}", total_read);
+                }
+                TestMode::Download => {
+                    // Write data
+                    let buf = vec![1u8; CHUNK_SIZE];
+                    let mut sent = 0;
+                    while sent < TOTAL_SIZE {
+                        let to_send = std::cmp::min(CHUNK_SIZE, TOTAL_SIZE - sent);
+                        if socket.write_all(&buf[..to_send]).await.is_err() {
+                            break;
+                        }
+                        sent += to_send;
+                    }
                 }
             }
         }
     });
 
     // 3. Create Config
+    // Use log-level info to reduce noise and improve performance
     let config_yaml = format!(r#"
 port: {http_port}
 socks-port: {socks_port}
 mixed-port: {mixed_port}
 allow-lan: false
 mode: rule
-log-level: debug
+log-level: info
 external-controller: :{external_controller_port}
 
 listeners:
@@ -193,7 +233,6 @@ rules:
 
     // 5. Connect and Benchmark
     let proxy_addr = format!("127.0.0.1:{mixed_port}");
-    let start = Instant::now();
     
     match TcpStream::connect(&proxy_addr).await {
         Ok(mut stream) => {
@@ -212,50 +251,94 @@ rules:
                 return;
             }
 
-            // Send 500KB
-            const CHUNK_SIZE: usize = 16 * 1024;
-            const TOTAL_SIZE: usize = 500 * 1024; // 500KB
-            
+            let start = Instant::now();
             let (mut rd, mut wr) = stream.into_split();
-            
-            let writer = tokio::spawn(async move {
-                let chunk = vec![0u8; CHUNK_SIZE];
-                let mut sent = 0;
-                while sent < TOTAL_SIZE {
-                    if wr.write_all(&chunk).await.is_err() {
-                        break;
-                    }
-                    sent += CHUNK_SIZE;
-                    // Yield to let other tasks run and avoid flooding tquic too fast
-                    tokio::task::yield_now().await;
+
+            match mode {
+                TestMode::Echo => {
+                    let writer = tokio::spawn(async move {
+                        let chunk = vec![1u8; CHUNK_SIZE];
+                        let mut sent = 0;
+                        while sent < TOTAL_SIZE {
+                            if wr.write_all(&chunk).await.is_err() { break; }
+                            sent += CHUNK_SIZE;
+                        }
+                    });
+                    
+                    let reader = tokio::spawn(async move {
+                        let mut buf = vec![0u8; CHUNK_SIZE];
+                        let mut received = 0;
+                        while received < TOTAL_SIZE {
+                            match rd.read(&mut buf).await {
+                                Ok(n) if n == 0 => break,
+                                Ok(n) => received += n,
+                                Err(_) => break,
+                            }
+                        }
+                        received
+                    });
+                    
+                    let _ = writer.await;
+                    let received = reader.await.unwrap();
+                    let duration = start.elapsed();
+                    let speed = (received as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
+                    println!("[Echo] {}: Size: {} MB, Time: {:.2}s, Speed: {:.2} MB/s", 
+                        algo, received / 1024 / 1024, duration.as_secs_f64(), speed);
+                },
+                TestMode::Upload => {
+                    // Only Write
+                    let writer = tokio::spawn(async move {
+                        let chunk = vec![1u8; CHUNK_SIZE];
+                        let mut sent = 0;
+                        while sent < TOTAL_SIZE {
+                            if wr.write_all(&chunk).await.is_err() { break; }
+                            sent += CHUNK_SIZE;
+                        }
+                        // Shutdown write to signal EOF to server
+                        let _ = wr.shutdown().await;
+                        sent
+                    });
+
+                    // Read potentially small response or just EOF
+                    let reader = tokio::spawn(async move {
+                         let mut buf = [0u8; 1024];
+                         loop {
+                             match rd.read(&mut buf).await {
+                                 Ok(n) if n == 0 => break,
+                                 Ok(_) => {},
+                                 Err(_) => break,
+                             }
+                         }
+                    });
+
+                    let sent = writer.await.unwrap();
+                    let _ = reader.await;
+                    let duration = start.elapsed();
+                    let speed = (sent as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
+                    println!("[Upload] {}: Size: {} MB, Time: {:.2}s, Speed: {:.2} MB/s", 
+                        algo, sent / 1024 / 1024, duration.as_secs_f64(), speed);
+                },
+                TestMode::Download => {
+                    // Only Read
+                    let reader = tokio::spawn(async move {
+                        let mut buf = vec![0u8; CHUNK_SIZE];
+                        let mut received = 0;
+                        loop {
+                            match rd.read(&mut buf).await {
+                                Ok(n) if n == 0 => break,
+                                Ok(n) => received += n,
+                                Err(_) => break,
+                            }
+                        }
+                        received
+                    });
+
+                    let received = reader.await.unwrap();
+                    let duration = start.elapsed();
+                    let speed = (received as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
+                    println!("[Download] {}: Size: {} MB, Time: {:.2}s, Speed: {:.2} MB/s", 
+                        algo, received / 1024 / 1024, duration.as_secs_f64(), speed);
                 }
-            });
-            
-            let reader = tokio::spawn(async move {
-                let mut buf = vec![0u8; CHUNK_SIZE];
-                let mut received = 0;
-                while received < TOTAL_SIZE {
-                    match rd.read(&mut buf).await {
-                        Ok(n) if n == 0 => break,
-                        Ok(n) => received += n,
-                        Err(_) => break,
-                    }
-                }
-                received
-            });
-            
-            let _ = writer.await;
-            let received = reader.await.unwrap();
-            
-            let duration = start.elapsed();
-            let speed = (received as f64 / 1024.0 / 1024.0) / duration.as_secs_f64();
-            
-            println!("Algorithm: {}, Size: {} MB, Time: {:.2}s, Speed: {:.2} MB/s", 
-                algo, received / 1024 / 1024, duration.as_secs_f64(), speed);
-                
-            // Ideally we assert received == TOTAL_SIZE, but if connection dropped, we might receive less
-            if received != TOTAL_SIZE {
-                println!("Warning: Received {} bytes, expected {}", received, TOTAL_SIZE);
             }
         }
         Err(e) => {
@@ -265,7 +348,7 @@ rules:
 
     shutdown();
     let _ = handle.join();
-    let _ = echo_server.await;
+    let _ = server_handle.await;
     
     // Wait a bit for ports to be released
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -276,9 +359,15 @@ rules:
 async fn test_trojan_tquic_cc_benchmark() {
     clash_lib::setup_default_crypto_provider();
     
-    // We run them sequentially
-    run_cc_test("bbr", 30000).await;
-    run_cc_test("cubic", 31000).await;
-    run_cc_test("bbr3", 32000).await;
-    run_cc_test("copa", 33000).await;
+    // Test Upload speed for different algorithms
+    run_benchmark("bbr", TestMode::Upload, 30000).await;
+    run_benchmark("cubic", TestMode::Upload, 31000).await;
+    run_benchmark("bbr3", TestMode::Upload, 32000).await;
+    run_benchmark("copa", TestMode::Upload, 33000).await;
+    
+    // Test Download speed
+    run_benchmark("bbr", TestMode::Download, 34000).await;
+    run_benchmark("cubic", TestMode::Download, 35000).await;
+    run_benchmark("bbr3", TestMode::Download, 36000).await;
+    run_benchmark("copa", TestMode::Download, 37000).await;
 }

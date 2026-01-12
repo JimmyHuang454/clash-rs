@@ -318,11 +318,13 @@ impl TQuicDriver {
                                                 } else {
                                                     c.set_congestion_control_algorithm(tquic::CongestionControlAlgorithm::Bbr);
                                                 }
-                                                c.set_max_idle_timeout(30000);
-                                                c.set_initial_max_streams_bidi(100);
-                                                c.set_initial_max_data(100_000_000);
-                                                c.set_initial_max_stream_data_bidi_local(50_000_000);
-                                                c.set_initial_max_stream_data_bidi_remote(50_000_000);
+                                                // c.set_max_idle_timeout(30000);
+                                                // c.set_initial_max_streams_bidi(100);
+                                                // c.set_initial_max_data(10_000_000_000);
+                                                // c.set_initial_max_stream_data_bidi_local(5_000_000_000);
+                                                // c.set_initial_max_stream_data_bidi_remote(5_000_000_000);
+                                                // c.set_initial_congestion_window(2048);
+                                                // c.set_min_congestion_window(512);
                                                 c
                                             },
                                             Err(e) => {

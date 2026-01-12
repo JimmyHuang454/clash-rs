@@ -1,0 +1,51 @@
+mixed-port: 7890
+allow-lan: false
+bind-address: "*"
+allocator-limit: "80MB"
+mode: rule
+log-level: error
+log-timestamp: false
+mmdb: "clash-bin/tests/data/config/Country.mmdb"
+dns:
+  enable: true
+  ipv6: false
+  default-nameserver: [223.5.5.5, 119.29.29.29]
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  use-hosts: true
+  nameserver: ["https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"]
+  fallback:
+    [
+      "https://dns.google/dns-query#sq",
+      "https://dns.cloudflare.com/dns-query#sq",
+    ]
+  fallback-filter:
+    { geoip: true, geoip-cache-expiration: 5000, match-noproxy: true }
+listeners:
+  - name: "trojan-in"
+    type: trojan
+    port: 1443
+    listen: 127.0.0.1
+    password: password
+    certificate: "./cert.pem"
+    private-key: "./key.pem"
+    network: tquic
+    congestion-controller: "bbr3"
+    alpn:
+      - h3
+proxies:
+  - name: "out"
+    type: trojan
+    server: 127.0.0.1
+    port: 1443
+    password: password
+    udp: true
+    network: tquic
+    skip-cert-verify: true
+    alpn:
+      - h3
+    quic-opts:
+      congestion-controller: "bbr3"
+rules:
+  - SRC-IP-CIDR,0.0.0.0/32,DIRECT
+  - MATCH,out
